@@ -75,7 +75,7 @@ class CpuDatasetTest {
     @Test
     void simulP23() {
         Map<String, Simulation> simulations = new LinkedHashMap<>();
-        Arrays.asList(65, 70, 75, 80, 85).forEach(p -> {
+        Arrays.asList(65, 70, 75, 80, 85, 90, 95).forEach(p -> {
             Simulation simul = simul(null, p, 1.0f, null);
             simulations.put(simul.name, simul);
         });
@@ -278,7 +278,8 @@ class CpuDatasetTest {
             Pod pod = simul.pods.get(podId);
             int podRequest = pod.request;
             Integer podLimit = pod.limit;
-            log.info(name + " pod request=" + podRequest + " limit=" + podLimit);
+            long count = pod.values.stream().filter(Value::isThrottled).count();
+            log.info(name + " pod request=" + podRequest + " limit=" + podLimit + " count throttled=" + count);
         });
     }
 
