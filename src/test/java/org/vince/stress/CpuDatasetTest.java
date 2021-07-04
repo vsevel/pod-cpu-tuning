@@ -1,5 +1,8 @@
 package org.vince.stress;
 
+import ch.reto_hoehener.japng.Apng;
+import ch.reto_hoehener.japng.ApngFactory;
+import ch.reto_hoehener.japng.JapngException;
 import io.quarkus.test.junit.QuarkusTest;
 import org.jboss.logging.Logger;
 import org.junit.jupiter.api.AfterEach;
@@ -77,6 +80,20 @@ class CpuDatasetTest {
             simulations.put(simul.name, simul);
         });
         createPodView(42, simulations, 100, 250);
+    }
+
+    @Test
+    public void simulAllLimit5xDetailed() throws ExecutionException, InterruptedException {
+        List<Future<?>> futures = new ArrayList<>();
+        for (int p = 50; p <= 99; p++) {
+            futures.add(simulAsynch(null, p, 1.0f, 5.0f));
+        }
+        int done = 0;
+        for (Future<?> future : futures) {
+            future.get();
+            done++;
+            log.info("done " + done + "/" + futures.size());
+        }
     }
 
     private void simul(Float limitFactor) throws ExecutionException, InterruptedException {
@@ -369,6 +386,23 @@ class CpuDatasetTest {
             }
         }
         log.info("max = " + max);
+    }
+
+
+    @Test
+        // Xmx=8g
+    void apng() throws JapngException {
+        String runId = "lf5.0";
+        // String runId = "nolimit";
+        Apng apng = ApngFactory.createApng();
+        File dir = new File("images/" + runId);
+        int p = 99;
+        while (p >= 50) {
+            log.info("adding frame " + p);
+            apng.addFrame(new File(dir, "p" + p + "-rf1.0.png"), 300);
+            p--;
+        }
+        apng.assemble(new File("anim_" + runId + ".png"));
     }
 
 
