@@ -73,13 +73,13 @@ class CpuDatasetTest {
     }
 
     @Test
-    void simulP42() {
+    void simulP23() {
         Map<String, Simulation> simulations = new LinkedHashMap<>();
-        Arrays.asList(65, 70, 75, 80, 82).forEach(p -> {
-            Simulation simul = simul(null, p, 1.0f, 5.0f);
+        Arrays.asList(65, 70, 75, 80, 85).forEach(p -> {
+            Simulation simul = simul(null, p, 1.0f, null);
             simulations.put(simul.name, simul);
         });
-        createPodView(42, simulations, 100, 250);
+        createPodView(23, simulations, 2150, 200);
     }
 
     @Test
@@ -277,7 +277,7 @@ class CpuDatasetTest {
         simulations.forEach((name, simul) -> {
             Pod pod = simul.pods.get(podId);
             int podRequest = pod.request;
-            int podLimit = pod.limit;
+            Integer podLimit = pod.limit;
             log.info(name + " pod request=" + podRequest + " limit=" + podLimit);
         });
     }
