@@ -27,7 +27,7 @@ public class Simulation {
     public void useRequestAsPercentile(int p, float requestFactor, Float limitFactor) {
         pods.forEach(pod -> {
             pod.request = (int) (pod.getPercentile(p) * requestFactor);
-            if(limitFactor != null) {
+            if (limitFactor != null) {
                 pod.limit = (int) (pod.request * limitFactor);
             }
         });
@@ -39,6 +39,17 @@ public class Simulation {
 
     public void calculateCpu(int totalMillicoresHost) {
         instants.forEach(instant -> instant.calculateCpu(totalMillicoresHost));
+    }
+
+    public int getCpuFullDuringTimeAsPercent() {
+        int maxedOutInstantsCount = getMaxedOutInstants().size();
+        return (int) (maxedOutInstantsCount * 100.0 / instants.size());
+    }
+
+    public double getNumberOfPodsNotSatisfiedAsPercent() {
+        long throttledPods = getNumberOfThrottledPods();
+        long totalNumberOfValues = getTotalNumberOfValues();
+        return ((int) (throttledPods * 10000.0 / totalNumberOfValues)) / 100.0;
     }
 
     public List<Instant> getMaxedOutInstants() {

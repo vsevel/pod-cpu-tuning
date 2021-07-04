@@ -99,7 +99,7 @@ class CpuDatasetTest {
         log.info("---");
         log.info("p=" + p + " request_factor=" + requestFactor + " limit_factor=" + limitFactor);
         Simulation simulation = createSimulation();
-        simulation.name = "p" + p;
+        simulation.name = "P" + p;
         log.info("biggest instant: " + simulation.getBiggestInstant());
         log.info("sum of max: " + simulation.getSumOfMax());
 
@@ -113,11 +113,11 @@ class CpuDatasetTest {
         log.info("simulation calculated in " + (System.currentTimeMillis() - start) + " ms");
         log.info("avg efficiency: " + simulation.getAvgEfficiencyPercent() + "%");
         int maxedOutInstantsCount = simulation.getMaxedOutInstants().size();
-        log.info("number of maxed out cpu instants: " + maxedOutInstantsCount + " (" + (int) (maxedOutInstantsCount * 100.0 / simulation.instants.size()) + "%)");
+        log.info("number of maxed out cpu instants: " + maxedOutInstantsCount + " (" + simulation.getCpuFullDuringTimeAsPercent() + "%)");
         log.info("avg completion: " + ((int) (simulation.getAvgCompletion(false) * 1000)) / 10.0 + "%");
         long throttledPods = simulation.getNumberOfThrottledPods();
         long totalNumberOfValues = simulation.getTotalNumberOfValues();
-        log.info("number of pods NOT satisfied: " + throttledPods + "/" + totalNumberOfValues + "(" + ((int) (throttledPods * 10000.0 / totalNumberOfValues)) / 100.0 + "%)");
+        log.info("number of pods NOT satisfied: " + throttledPods + "/" + totalNumberOfValues + "(" + simulation.getNumberOfPodsNotSatisfiedAsPercent() + "%)");
 
         createImage(simulation, getImageName(name, p, requestFactor), "images/" + (limitFactor != null ? "lf" + limitFactor : "nolimit"));
         return simulation;
@@ -127,39 +127,69 @@ class CpuDatasetTest {
         return (name == null ? "" : name + "-") + "p" + p + "-rf" + requestFactor;
     }
 
+    @SuppressWarnings({"unused"})
     private void createImage(Simulation simulation, String name, String dir) {
 
-        int xfactor = 100;
-        int width = (simulation.pods.size() + 1) * xfactor;
-        int height = simulation.instants.size();
+        int yfactor = 100;
+        int height = (simulation.pods.size() + 1) * yfactor;
+        int width = simulation.instants.size();
 
         // Constructs a BufferedImage of one of the predefined image types.
         BufferedImage bufferedImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
 
         // Create a graphics which can be used to draw into the buffered image
         Graphics2D g2d = bufferedImage.createGraphics();
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-        int y = 0;
+        int x = 0;
         for (Instant instant : simulation.instants) {
-            int x = 0;
+            int y = 0;
             for (Value value : instant.values) {
                 g2d.setColor(getValueThrottledColor(value));
-                g2d.fillRect(x, y, xfactor, 1);
-                x += xfactor;
+                g2d.fillRect(x, y, 1, yfactor);
+                y += yfactor;
             }
             g2d.setColor(getEfficiencyColor(instant));
-            g2d.fillRect(x, y, xfactor, 1);
-            y++;
+            g2d.fillRect(x, y, 1, yfactor);
+            x++;
         }
+
+        Font font = new Font("Calibri", Font.PLAIN, 100);
+        g2d.setFont(font);
+        g2d.setColor(Color.blue);
+
+        int xtextoffset = 40;
+        int xbaroffset = 1500;
+        int ytext = 120;
+        int xtext2offset = 1000;
+
+        g2d.drawString("%" + simulation.name, xtextoffset, ytext);
+
+        ytext += 100;
+        g2d.drawString("Host Cpu (milli)", xtextoffset, ytext);
+        g2d.drawString("" + simulation.getSumOfRequests(), xtextoffset + xtext2offset, ytext);
+        g2d.fillRect(xbaroffset, ytext - 80, (int) ((simulation.getSumOfRequests() * 1.0 / 40000) * (width - xbaroffset)), 90);
+
+        ytext += 100;
+        g2d.drawString("Host Cpu Efficiency", xtextoffset, ytext);
+        g2d.drawString(simulation.getAvgEfficiencyPercent() + "%", xtextoffset + xtext2offset, ytext);
+        g2d.fillRect(xbaroffset, ytext - 80, (int) ((simulation.getAvgEfficiencyPercent() * 1.0 / 100) * (width - xbaroffset)), 90);
+
+        ytext += 100;
+        g2d.drawString("Host Cpu Full", xtextoffset, ytext);
+        g2d.drawString(simulation.getCpuFullDuringTimeAsPercent() + "%", xtextoffset + xtext2offset, ytext);
+        g2d.fillRect(xbaroffset, ytext - 80, (int) ((simulation.getCpuFullDuringTimeAsPercent() * 1.0 / 100) * (width - xbaroffset)), 90);
+
+        ytext += 100;
+        g2d.drawString("Throttled Pods", xtextoffset, ytext);
+        g2d.drawString(simulation.getNumberOfPodsNotSatisfiedAsPercent() + "%", xtextoffset + xtext2offset, ytext);
+        g2d.fillRect(xbaroffset, ytext - 80, (int) ((simulation.getNumberOfPodsNotSatisfiedAsPercent() / 100) * (width - xbaroffset)), 90);
 
         // Disposes of this graphics context and releases any system resources that it is using.
         g2d.dispose();
 
         // Save as PNG
-        boolean ok = new File(dir).mkdirs();
-        if (!ok) {
-            throw new RuntimeException("mkdirs ko");
-        }
+        new File(dir).mkdirs();
         File file = new File(dir + "/" + name + ".png");
         try {
             ImageIO.write(bufferedImage, "png", file);
