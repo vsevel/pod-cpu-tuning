@@ -2,6 +2,8 @@ package org.vince.stress;
 
 import io.quarkus.test.junit.QuarkusTest;
 import org.jboss.logging.Logger;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.vince.stress.model.Instant;
 import org.vince.stress.model.Pod;
@@ -24,6 +26,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.IntStream;
 
 import static java.util.stream.Collectors.joining;
@@ -34,43 +40,66 @@ class CpuDatasetTest {
 
     private static final Logger log = Logger.getLogger(CpuDatasetTest.class);
 
-    @Test
-    void simul() throws IOException {
-        simul(null, 65, 1.0f, 5.0f, null);
+    List<List<Integer>> biglist = loadSeries();
+
+    ExecutorService executorService;
+
+    @BeforeEach
+    void before() {
+        executorService = Executors.newFixedThreadPool(10);
+    }
+
+    @AfterEach
+    void after() {
+        executorService.shutdown();
     }
 
     @Test
-    void simulAll() throws IOException {
-        simul(null);
+    void simul() {
+        simul(null, 65, 1.0f, 5.0f);
+    }
+
+    @Test
+    void simulAllLimit5x() throws ExecutionException, InterruptedException {
         simul(5.0f);
     }
 
     @Test
-    void simulP42() throws IOException {
+    void simulAllNoLimit() throws ExecutionException, InterruptedException {
+        simul(null);
+    }
+
+    @Test
+    void simulP42() {
         Map<String, Simulation> simulations = new LinkedHashMap<>();
-        simul(null, 65, 1.0f, 5.0f, simulations);
-        simul(null, 70, 1.0f, 5.0f, simulations);
-        simul(null, 75, 1.0f, 5.0f, simulations);
-        simul(null, 80, 1.0f, 5.0f, simulations);
-        simul(null, 85, 1.0f, 5.0f, simulations);
-        // simul(null, 90, 1.0f, 5.0f, simulations);
+        Arrays.asList(65, 70, 75, 80, 82).forEach(p -> {
+            Simulation simul = simul(null, p, 1.0f, 5.0f);
+            simulations.put(simul.name, simul);
+        });
         createPodView(42, simulations, 100, 250);
     }
 
-
-    private void simul(Float limitFactor) throws IOException {
-        simul("harness", 50, 1.15f, limitFactor, null);
-        Map<String, Simulation> simulations = new LinkedHashMap<>();
+    private void simul(Float limitFactor) throws ExecutionException, InterruptedException {
+        List<Future<?>> futures = new ArrayList<>();
+        simul("harness", 50, 1.15f, limitFactor);
         for (int p = 50; p <= 95; p += 5) {
-            simul(null, p, 1.0f, limitFactor, simulations);
+            futures.add(simulAsynch(null, p, 1.0f, limitFactor));
         }
-        simul(null, 99, 1.0f, limitFactor, simulations);
+        futures.add(simulAsynch(null, 99, 1.0f, limitFactor));
+        for (Future<?> future : futures) {
+            future.get();
+        }
     }
 
-    private void simul(String name, int p, float requestFactor, Float limitFactor, Map<String, Simulation> simulations) throws IOException {
+    private Future<Simulation> simulAsynch(String name, int p, float requestFactor, Float limitFactor) {
+        return executorService.submit(() -> simul(name, p, requestFactor, limitFactor));
+    }
+
+    private Simulation simul(String name, int p, float requestFactor, Float limitFactor) {
         log.info("---");
         log.info("p=" + p + " request_factor=" + requestFactor + " limit_factor=" + limitFactor);
         Simulation simulation = createSimulation();
+        simulation.name = "p" + p;
         log.info("biggest instant: " + simulation.getBiggestInstant());
         log.info("sum of max: " + simulation.getSumOfMax());
 
@@ -79,7 +108,9 @@ class CpuDatasetTest {
         int sumOfRequests = simulation.getSumOfRequests();
         log.info("sum of requests = " + sumOfRequests);
 
+        long start = System.currentTimeMillis();
         simulation.calculateCpu(sumOfRequests);
+        log.info("simulation calculated in " + (System.currentTimeMillis() - start) + " ms");
         log.info("avg efficiency: " + simulation.getAvgEfficiencyPercent() + "%");
         int maxedOutInstantsCount = simulation.getMaxedOutInstants().size();
         log.info("number of maxed out cpu instants: " + maxedOutInstantsCount + " (" + (int) (maxedOutInstantsCount * 100.0 / simulation.instants.size()) + "%)");
@@ -89,16 +120,14 @@ class CpuDatasetTest {
         log.info("number of pods NOT satisfied: " + throttledPods + "/" + totalNumberOfValues + "(" + ((int) (throttledPods * 10000.0 / totalNumberOfValues)) / 100.0 + "%)");
 
         createImage(simulation, getImageName(name, p, requestFactor), "images/" + (limitFactor != null ? "lf" + limitFactor : "nolimit"));
-        if (simulations != null) {
-            simulations.put("p" + p, simulation);
-        }
+        return simulation;
     }
 
     private String getImageName(String name, int p, float requestFactor) {
         return (name == null ? "" : name + "-") + "p" + p + "-rf" + requestFactor;
     }
 
-    private void createImage(Simulation simulation, String name, String dir) throws IOException {
+    private void createImage(Simulation simulation, String name, String dir) {
 
         int xfactor = 100;
         int width = (simulation.pods.size() + 1) * xfactor;
@@ -127,9 +156,16 @@ class CpuDatasetTest {
         g2d.dispose();
 
         // Save as PNG
-        new File(dir).mkdirs();
+        boolean ok = new File(dir).mkdirs();
+        if (!ok) {
+            throw new RuntimeException("mkdirs ko");
+        }
         File file = new File(dir + "/" + name + ".png");
-        ImageIO.write(bufferedImage, "png", file);
+        try {
+            ImageIO.write(bufferedImage, "png", file);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private Color getValueThrottledColor(Value value) {
@@ -150,9 +186,8 @@ class CpuDatasetTest {
         }
     }
 
-    private Simulation createSimulation() throws IOException {
+    private Simulation createSimulation() {
 
-        List<List<Integer>> biglist = loadSeries();
         log.info("loaded " + biglist.size() + " series for " + biglist.get(0).size() + " pods");
         int podCount = biglist.get(0).size();
 
@@ -178,7 +213,7 @@ class CpuDatasetTest {
         return simulation;
     }
 
-    private void createPodView(int podId, Map<String, Simulation> simulations, int skip, int limit) throws IOException {
+    private void createPodView(int podId, Map<String, Simulation> simulations, int skip, int limit) {
         try (FileWriter fileWriter = new FileWriter("test" + podId + ".csv");
              PrintWriter out = new PrintWriter(fileWriter)) {
             Simulation simul0 = simulations.values().stream().findFirst().orElseThrow();
@@ -188,6 +223,8 @@ class CpuDatasetTest {
                 out.println(name + ";" + simul.instants.stream().skip(skip).limit(limit).map(instant -> "" + instant.values.get(podId).realMillicores).collect(joining(";")));
             });
             out.println("ideal;" + simul0.instants.stream().skip(skip).limit(limit).map(instant -> "" + instant.values.get(podId).idealMillicores).collect(joining(";")));
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         }
 
         simulations.forEach((name, simul) -> {
@@ -229,7 +266,7 @@ class CpuDatasetTest {
         });
     }
 
-    private List<List<Integer>> loadSeries() throws IOException {
+    private List<List<Integer>> loadSeries() {
         List<List<Integer>> biglist = new ArrayList<>();
         try (FileReader fr = new FileReader("serie.csv");
              BufferedReader br = new BufferedReader(fr)) {
@@ -242,6 +279,8 @@ class CpuDatasetTest {
                         .collect(toList());
                 biglist.add(list.subList(0, list.size() - 1));
             }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         }
         return biglist;
     }

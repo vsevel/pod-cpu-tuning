@@ -13,6 +13,7 @@ public class Simulation {
     public Host host;
     public List<Instant> instants;
     public List<Pod> pods;
+    public String name;
 
     public int getSumOfMax() {
         return pods.stream().map(Pod::getMax).reduce(0, Integer::sum);
