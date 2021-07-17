@@ -25,6 +25,7 @@ import java.io.PrintWriter;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,34 +60,81 @@ class CpuDatasetTest {
 
     @Test
     void simul() {
-        simul(null, 65, 1.0f, 5.0f);
+        simul(null, 65, 1.0f, 5.0f, null);
     }
 
     @Test
     void simulAllLimit5x() throws ExecutionException, InterruptedException {
-        simul(5.0f);
+        simul(5.0f, null);
     }
 
     @Test
     void simulAllNoLimit() throws ExecutionException, InterruptedException {
-        simul(null);
+        simul(null, null);
+    }
+
+    @Test
+    void simulP42() {
+        Map<String, Simulation> simulations = new LinkedHashMap<>();
+        Arrays.asList(65, 70, 75, 80, 85, 90, 95).forEach(p -> {
+            Simulation simul = simul(null, p, 1.0f, 5.0f, null);
+            simulations.put(simul.name, simul);
+        });
+        createPodView(42, simulations, 100, 350);
     }
 
     @Test
     void simulP23() {
         Map<String, Simulation> simulations = new LinkedHashMap<>();
         Arrays.asList(65, 70, 75, 80, 85, 90, 95).forEach(p -> {
-            Simulation simul = simul(null, p, 1.0f, null);
+            Simulation simul = simul(null, p, 1.0f, null, null);
             simulations.put(simul.name, simul);
         });
         createPodView(23, simulations, 2150, 200);
+    }
+
+    // with host factor=1.0
+    // Simul 65 throttled avg=5.98% 90%=13.95% 95%=18.65% max=20.58%
+    // Simul 70 throttled avg=4.29% 90%=10.85% 95%=15.52% max=17.77%
+    // Simul 75 throttled avg=2.89% 90%=7.08% 95%=12.4% max=14.96%
+    // Simul 80 throttled avg=1.73% 90%=4.17% 95%=8.52% max=13.46%
+    //
+    // with host factor=1.25
+    // Simul 65 throttled avg=1.78% 90%=5.27% 95%=7.98% max=13.56%
+    // Simul 70 throttled avg=1.38% 90%=4.41% 95%=7.03% max=12.88%
+    // Simul 75 throttled avg=1.0% 90%=3.45% 95%=4.68% max=11.82%
+    // Simul 80 throttled avg=0.66% 90%=1.85% 95%=3.35% max=10.05%
+    @Test
+    void simulP() {
+        Map<String, Simulation> simulations = new LinkedHashMap<>();
+        Arrays.asList(65, 70, 75, 80, 85, 90, 95).forEach(p -> {
+            Simulation simul = simul(null, p, 1.0f, null, 1.25f);
+            List<Double> throttled = simul.pods.stream().map(this::getThrottledCountAsPercent).sorted().collect(toList());
+            double avg = getAverage(throttled);
+            double p90 = throttled.get((int) (throttled.size() * 0.90));
+            double p95 = throttled.get((int) (throttled.size() * 0.95));
+            double max = throttled.get(throttled.size() - 1);
+            log.info("Simul " + p + " throttled avg=" + formatPercent(avg) + " 90%=" + formatPercent(p90) + " 95%=" + formatPercent(p95) + " max=" + formatPercent(max));
+        });
+    }
+
+    private String formatPercent(double value) {
+        return (((int) (value * 10000)) * 1.0 / 100) + "%";
+    }
+
+    private double getAverage(List<Double> list) {
+        return list.stream().reduce(0.0, Double::sum) / list.size();
+    }
+
+    private double getThrottledCountAsPercent(Pod pod) {
+        return pod.values.stream().filter(Value::isThrottled).count() * 1.0 / pod.values.size();
     }
 
     @Test
     public void simulAllLimit5xDetailed() throws ExecutionException, InterruptedException {
         List<Future<?>> futures = new ArrayList<>();
         for (int p = 50; p <= 99; p++) {
-            futures.add(simulAsynch(null, p, 1.0f, 5.0f));
+            futures.add(simulAsynch(null, p, 1.0f, 5.0f, null));
         }
         int done = 0;
         for (Future<?> future : futures) {
@@ -96,23 +144,23 @@ class CpuDatasetTest {
         }
     }
 
-    private void simul(Float limitFactor) throws ExecutionException, InterruptedException {
+    private void simul(Float limitFactor, Float hostFactor) throws ExecutionException, InterruptedException {
         List<Future<?>> futures = new ArrayList<>();
-        simul("harness", 50, 1.15f, limitFactor);
+        simul("harness", 50, 1.15f, limitFactor, hostFactor);
         for (int p = 50; p <= 95; p += 5) {
-            futures.add(simulAsynch(null, p, 1.0f, limitFactor));
+            futures.add(simulAsynch(null, p, 1.0f, limitFactor, hostFactor));
         }
-        futures.add(simulAsynch(null, 99, 1.0f, limitFactor));
+        futures.add(simulAsynch(null, 99, 1.0f, limitFactor, hostFactor));
         for (Future<?> future : futures) {
             future.get();
         }
     }
 
-    private Future<Simulation> simulAsynch(String name, int p, float requestFactor, Float limitFactor) {
-        return executorService.submit(() -> simul(name, p, requestFactor, limitFactor));
+    private Future<Simulation> simulAsynch(String name, int p, float requestFactor, Float limitFactor, Float hostFactor) {
+        return executorService.submit(() -> simul(name, p, requestFactor, limitFactor, hostFactor));
     }
 
-    private Simulation simul(String name, int p, float requestFactor, Float limitFactor) {
+    private Simulation simul(String name, int p, float requestFactor, Float limitFactor, Float hostFactor) {
         log.info("---");
         log.info("p=" + p + " request_factor=" + requestFactor + " limit_factor=" + limitFactor);
         Simulation simulation = createSimulation();
@@ -126,7 +174,7 @@ class CpuDatasetTest {
         log.info("sum of requests = " + sumOfRequests);
 
         long start = System.currentTimeMillis();
-        simulation.calculateCpu(sumOfRequests);
+        simulation.calculateCpu(hostFactor == null ? sumOfRequests : (int) (sumOfRequests * hostFactor));
         log.info("simulation calculated in " + (System.currentTimeMillis() - start) + " ms");
         log.info("avg efficiency: " + simulation.getAvgEfficiencyPercent() + "%");
         int maxedOutInstantsCount = simulation.getMaxedOutInstants().size();
@@ -404,6 +452,29 @@ class CpuDatasetTest {
             p--;
         }
         apng.assemble(new File("anim_" + runId + ".png"));
+    }
+
+    @Test
+    void cfs() {
+        Pod pod1 = new Pod(1);
+        pod1.request = 50;
+        Pod pod2 = new Pod(2);
+        pod2.request = 150;
+        Pod pod3 = new Pod(3);
+        pod3.request = 300;
+        pod3.limit = 900;
+        Simulation simulation = new Simulation();
+        Instant instant = new Instant(1);
+        Value value1 = new Value(pod1, 2000);
+        Value value2 = new Value(pod2, 2000);
+        Value value3 = new Value(pod3, 2000);
+        instant.values = Arrays.asList(value1, value2, value3);
+        simulation.pods = Arrays.asList(pod1, pod2, pod3);
+        simulation.instants = Collections.singletonList(instant);
+        instant.calculateCpu(2000);
+        log.info("pod1 = " + value1.realMillicores);
+        log.info("pod2 = " + value2.realMillicores);
+        log.info("pod3 = " + value3.realMillicores);
     }
 
 
